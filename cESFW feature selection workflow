@@ -1,0 +1,281 @@
+### In this file we present a cESFW feature selection workflow to obtain a set of top ranked genes for
+# the pre-granulosa activation single cell RNA sequencing dataset produced by Taylor et al.
+
+##### Dependencies #####
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import umap
+
+import cESFW
+
+import plotly.express as px 
+Colours = px.colors.qualitative.Dark24
+Colours.remove('#222A2A')
+Colours = np.concatenate((Colours,Colours))
+
+from scipy.io import mmread
+
+##### Dependencies #####
+
+##### UMAP Plotting Function #####
+
+def Plot_UMAP(Embedding):
+    fig, axs = plt.subplots(1,2,figsize=(16, 8))
+    plt.subplot(1,2,1)
+    plt.title("Timepoints",fontsize=18)
+    Unique_Timepoints = np.unique(Timepoints)
+    for i in np.arange(Unique_Timepoints.shape[0]):
+        IDs = np.where(Timepoints == Unique_Timepoints[i])[0]
+        plt.scatter(Embedding[IDs,0],Embedding[IDs,1],s=8,label=Unique_Timepoints[i])
+    #
+    plt.legend()
+    #
+    plt.subplot(1,2,2)
+    plt.title("Cell Subtypes",fontsize=18)
+    Unique_Cell_Subtypes = np.unique(Domains)
+    for i in np.arange(Unique_Cell_Subtypes.shape[0]):
+        IDs = np.where(Domains == Unique_Cell_Subtypes[i])[0]
+        plt.scatter(Embedding[IDs,0],Embedding[IDs,1],s=8,label=Unique_Cell_Subtypes[i],c=Colours[i])
+    #
+    plt.legend()
+    #
+    plt.setp(axs, xlabel='UMAP 1', ylabel="UMAP 2")
+
+##### Dependencies #####
+
+## Set path for retreiving and depositing data
+Gunes_path = "/Users/radleya/The Francis Crick Dropbox/BriscoeJ/Radleya/Gunes_Data/raw_data/"
+
+# E18.5 timepoint
+Sample1_barcodes = pd.read_csv(Gunes_path+"FRO575A1/outs/filtered_feature_bc_matrix/"+"barcodes.tsv",sep="\t",header=None)
+Sample1_barcodes = np.asarray(Sample1_barcodes.T)[0]
+Sample1_features = pd.read_csv(Gunes_path+"FRO575A1/outs/filtered_feature_bc_matrix/"+"features.tsv",sep="\t",header=None)
+Sample1_counts = np.asarray(mmread(Gunes_path+"FRO575A1/outs/filtered_feature_bc_matrix/"+"matrix.mtx").todense()).T
+Sample_1 = pd.DataFrame(Sample1_counts,index=Sample1_barcodes,columns=Sample1_features[1])
+
+# PD4 timepoint
+Sample2_barcodes = pd.read_csv(Gunes_path+"FRO575A2/outs/filtered_feature_bc_matrix/"+"barcodes.tsv",sep="\t",header=None)
+Sample2_barcodes = np.asarray(Sample2_barcodes.T)[0].tolist()
+Sample2_barcodes = [x.replace('1', '2') for x in Sample2_barcodes]
+Sample2_features = pd.read_csv(Gunes_path+"FRO575A2/outs/filtered_feature_bc_matrix/"+"features.tsv",sep="\t",header=None)
+Sample2_counts = np.asarray(mmread(Gunes_path+"FRO575A2/outs/filtered_feature_bc_matrix/"+"matrix.mtx").todense()).T
+Sample_2 = pd.DataFrame(Sample2_counts,index=Sample2_barcodes,columns=Sample2_features[1])
+
+# PD7 timepoint
+Sample3_barcodes = pd.read_csv(Gunes_path+"FRO575A3/outs/filtered_feature_bc_matrix/"+"barcodes.tsv",sep="\t",header=None)
+Sample3_barcodes = np.asarray(Sample3_barcodes.T)[0].tolist()
+Sample3_barcodes = [x.replace('1', '3') for x in Sample3_barcodes]
+Sample3_features = pd.read_csv(Gunes_path+"FRO575A3/outs/filtered_feature_bc_matrix/"+"features.tsv",sep="\t",header=None)
+Sample3_counts = np.asarray(mmread(Gunes_path+"FRO575A3/outs/filtered_feature_bc_matrix/"+"matrix.mtx").todense()).T
+Sample_3 = pd.DataFrame(Sample3_counts,index=Sample3_barcodes,columns=Sample3_features[1])
+
+
+Gunes_Data = pd.concat([Sample_1,Sample_2,Sample_3])
+Gunes_Data = Gunes_Data.loc[:,~Gunes_Data.columns.duplicated()].copy()
+
+Dataset_IDs = np.concatenate([np.repeat("Sample_1",Sample_1.shape[0]),np.repeat("Sample_2",Sample_2.shape[0]),np.repeat("Sample_3",Sample_3.shape[0])])
+
+##### Data pre-processing #####
+
+Sample_Info = pd.read_csv(Gunes_path+"Figure1_Analysed_Metadata.csv",index_col=0,header=0)
+
+Index_Labels = Sample_Info.index.tolist()
+Index_Labels = [x.replace('_', '-') for x in Index_Labels]
+Sample_Info.index = Index_Labels
+
+Gunes_Data = Gunes_Data.loc[Sample_Info.index]
+
+Keep_Genes = Gunes_Data.columns[np.where(np.sum(Gunes_Data > 0,axis=0) > 30)[0]]
+Gunes_Data = Gunes_Data[Keep_Genes]
+
+# Gunes_Data.to_csv(Gunes_path + "Stefan_Subset.csv")
+
+### Feature normalisation ###
+
+## Prior to using cESFW, data must be scaled/normalised such that every feature only has values between 0 and 1.
+# How this is done is ultimitely up to the user. However, for scRNA-seq data, we tend to find that the following relitively simple
+# normalisation approach yeilds good results.
+
+## Note, cESFW takes each row to be a sample and each column to be a feature. Hence, in this example, each row of Human_Embryo_Counts
+# is a cell and each colum is gene.
+
+## Create the scaled matrix from the scRNA-seq counts matrix
+Scaled_Matrix = Gunes_Data.copy()
+
+## Optional: Log transform the data. Emperically we find that some datasets benefit from log transformation where as other
+# are negatively effect by log transformation. So far the main fact appears to be platform specific, such that SMART-seq2
+# dataset are negatively effected by log transformation and 10X genomics datasets benefit from log transformation. Ultimetely
+# we encourage the user to try both options.
+
+Scaled_Matrix = np.log2(Scaled_Matrix+1) 
+
+## Clip the top 2.5 percent of observed values for each gene to mitigate the effect of unusually high
+# counts observations.
+Upper = np.percentile(Scaled_Matrix,97.5,axis=0)
+Upper[np.where(Upper == 0)[0]] = np.max(Scaled_Matrix,axis=0)[np.where(Upper == 0)[0]]
+Scaled_Matrix = Scaled_Matrix.clip(upper=Upper,axis=1) 
+
+## Normalise each feature/gene of the clipped matrix.
+Normalisation_Values = np.max(Scaled_Matrix,axis=0)
+Scaled_Matrix = Scaled_Matrix / Normalisation_Values
+
+### Run cESFW ###
+
+## Given the scaled matrix, cESFW will use the following function to extract all the non-zero values into a single vector. We do this
+# because ES calculations can completely ignore 0 values in the data. For sparse data like scRNA-seq data, this dramatically reduces the memory
+# required, and the number of calculations that need to be carried out. For relitively dense data, this step will still need to be carried
+# out to use cESFW, but will provide little benifit computationally.
+
+## path: A string path pre-designated folder to deposit the computationally efficient objects. E.g. "/mnt/c/Users/arthu/Test_Folder/"
+## Scaled_Matrix: The high dimensional DataFrame whose features have been scaled to values between 0 and 1. Format must be a Pandas DataFrame.
+## Min_Minority_State_Cardinality: The minimum value of the total minority state mass that a feature contains before it will be automatically
+# removed from the data, and hence analysis.
+
+cESFW.Create_ESFW_Objects(Gunes_path, Scaled_Matrix, Min_Minority_State_Cardinality = 30)
+
+## Now that we have the compute efficient object, we can calculate the ESSs and EPs matricies. The ESSs matrix provides the pairwise 
+# Entropy Sort Scores for each gene in the data. THe EPs matrix provides the EPs pairwise for each gene.
+
+#Masked_ESSs = cESFW.Parallel_Calculate_ESS_EPs(human_embryo_path)
+ESSs, EPs = cESFW.Parallel_Calculate_ESS_EPs(Gunes_path,Use_Cores=3)
+# np.save(Gunes_path + "ESSs.npy",ESSs)
+# np.save(Gunes_path + "EPs.npy",EPs)
+
+
+## Load the feature IDs that were saved when creating the computational efficient objects.
+Used_Features = np.load(Gunes_path + "Used_Features.npy",allow_pickle=True)
+ESSs = np.load(Gunes_path + "ESSs.npy")
+EPs = np.load(Gunes_path + "EPs.npy")
+
+Subset_Use_Feature_Inds = np.arange(Used_Features.shape[0])
+
+## Note which featue names remain.
+Subset_Used_Features = Used_Features[Subset_Use_Feature_Inds]
+
+## Subset Masked_ESSs to the remaining features. Masked refers to process of finding all indicies in in EPs matrix that are less than 0
+# and setting the values at these indexes to zero in the ESSs or EPs matrix. This provides a mathmatically defined way to turn and dense
+# correlation matrix into a sparse matrix where non-significant gene-gene correlations are ignored.
+ESSs = ESSs[np.ix_(Subset_Use_Feature_Inds,Subset_Use_Feature_Inds)]
+EPs = EPs[np.ix_(Subset_Use_Feature_Inds,Subset_Use_Feature_Inds)]
+
+Masked_ESSs = ESSs.copy()
+Masked_ESSs[EPs < 0] = 0
+Masked_EPs = EPs.copy()
+Masked_EPs[EPs < 0] = 0
+
+Keep_Features = np.where(np.sum(Masked_EPs,axis=0)!=0)[0]
+
+Subset_Used_Features = Subset_Used_Features[Keep_Features]
+
+# Subset_Use_Feature_Inds = Subset_Use_Feature_Inds[Keep_Features]
+
+ESSs = ESSs[np.ix_(Keep_Features,Keep_Features)]
+EPs = EPs[np.ix_(Keep_Features,Keep_Features)]
+
+Masked_ESSs = ESSs.copy()
+Masked_ESSs[EPs < 0] = 0
+Masked_EPs = EPs.copy()
+Masked_EPs[EPs < 0] = 0
+
+Keep_Features = np.array([])
+Min_Edges = 20
+while Keep_Features.shape[0] < Masked_EPs.shape[0]:
+    print(Masked_EPs.shape[0])
+    Keep_Features = np.where(np.sum(Masked_EPs > 0,axis=0) > Min_Edges)[0]
+    Subset_Used_Features = Subset_Used_Features[Keep_Features]
+    #
+    ESSs = ESSs[np.ix_(Keep_Features,Keep_Features)]
+    EPs = EPs[np.ix_(Keep_Features,Keep_Features)]
+    Masked_ESSs = ESSs.copy()
+    Masked_ESSs[EPs < 0] = 0
+    Masked_EPs = EPs.copy()
+    Masked_EPs[EPs < 0] = 0
+    Keep_Features = np.where(np.sum(Masked_EPs > 0,axis=0) > Min_Edges)[0]
+
+### Feature selection importance weighting ###
+
+# Some genes that we know are important in early human embryo development
+
+Known_Important_Genes = np.array(["Reep1","Dclk1","Svs6","Mia","Egfl6","Podxl","Cfap54","Mhrt","Enpp2","Apoc1","Gm17660","Cst8","Gng13","Lgr5","Fcer1g","Ebf1","Cldn5","Hbb-bt","Rmst","Pax8"])
+Known_Important_Genes = np.unique(Known_Important_Genes)
+Known_Important_Genes[np.isin(Known_Important_Genes,Subset_Used_Features) == 0]
+Known_Important_Gene_Inds = np.where(np.isin(Subset_Used_Features,Known_Important_Genes))[0]
+
+## The ESSs matrix quantifies the correlations/node edges for every gene with every other gene in the data. The EPs provides an value that
+# quantifies if the pariwise correlations are more significant than random chance. We would like to focus our analysis on genes that have
+# non-random correlations with one another. We can get an unsupervised importance weight for each gene by taking the column averages of the
+# ESSs matrix, while weighting the importance of each correlation by the EPs. By using Masked_EPs as the weights, we are stating that 
+# anything with an EP < 0 is more likely to have occured by random chance, and hence we do not want to take these relationships into account.
+Feature_Weights = np.average(np.absolute(ESSs),weights=Masked_EPs,axis=0)
+
+## Feature_Weights gives an average weight for the significance of each feature. We now add a bioloigcal assumption to workflow analysis 
+# that appears to significantly improve gene selection in scRNA-seq data. The assumption is that gene regulatory networks that control 
+# cell fate decisions consist of relitively small sets of highly correlated genes. Because Entropy Sorting and the Error Potential implicitly 
+# tell us when features are significantly correlated with each other, we can normalise the Feature_Weights of each gene by the number of edges
+# that connect them to other genes. This penalises genes that are part of very large networks.
+
+Significant_Genes_Per_Gene = (Masked_EPs > 0).sum(1)
+Normalised_Network_Feature_Weights = Feature_Weights/Significant_Genes_Per_Gene
+
+## Running the next two lines shows us that genes that we know to be important for early human development, are amongst the highest
+# ranked genes when considering the normalised network feature weights.
+np.where(np.isin(np.argsort(-Feature_Weights),Known_Important_Gene_Inds))[0]
+np.where(np.isin(np.argsort(-Normalised_Network_Feature_Weights),Known_Important_Gene_Inds))[0]
+
+## Take the top 4000 ranked genes. 4000 is relitively arbitrary and there is some flexibility, but above 5500 genes, performance
+# downstream drops significantly. For now, determining how many of the top ranked genes to choose is an intterative process for every
+# dataset.
+Use_Inds = np.argsort(-Normalised_Network_Feature_Weights)[np.arange(6000)] 
+Selected_Genes = Subset_Used_Features[Use_Inds]
+Selected_Genes.shape[0]
+## Sometimes when picking how many of the top ranked genes to take, it is useful to see if important known
+# markers are captured by your threshold.
+np.isin(Known_Important_Genes,Selected_Genes)
+
+## Now we will use our Masked_ESSs subsetted to the top 4000 cESFW weighted genes to cluster the genes into groups.
+# We will use hdbscan to cluster the genes because it doesn't require the user to pre-define the number of clusters.
+# However, as you will see in the next plot, using hdbscan is probably overkill, because we tend to find 2 distinct groups of genes.
+
+# clusterer = hdbscan.HDBSCAN(min_cluster_size=20)
+# clusterer.fit(Masked_ESSs[np.ix_(Use_Inds,Use_Inds)])
+
+## Extract hdbscan gene cluster labels
+# Gene_Labels = clusterer.labels_
+# Unique_Gene_Labels = np.unique(Gene_Labels)
+
+## Visualise the gene clusters on a UMAP.
+Neighbours = 20
+Dist = 0.1
+Gene_Embedding = umap.UMAP(n_neighbors=Neighbours, min_dist=Dist, n_components=2,random_state=42).fit_transform(Masked_ESSs[np.ix_(Use_Inds,Use_Inds)])
+
+
+plt.figure(figsize=(16,8))
+plt.subplot(1,2,1)
+plt.title("Colour = Feature_Weights", fontsize=20)
+plt.scatter(Gene_Embedding[:,0],Gene_Embedding[:,1],s=7,c=Feature_Weights[Use_Inds],vmax=0.2)
+plt.colorbar()
+plt.xlabel("UMAP 1",fontsize=16)
+plt.ylabel("UMAP 2",fontsize=16)
+plt.subplot(1,2,2)
+plt.title("Colour = Normalised_Network_Feature_Weights", fontsize=20)
+plt.scatter(Gene_Embedding[:,0],Gene_Embedding[:,1],s=7,c=Normalised_Network_Feature_Weights[Use_Inds],vmax=0.0004)
+# plt.scatter(Gene_Embedding[:,0],Gene_Embedding[:,1],s=7,c=np.log2(Feature_Weights*Significant_Genes_Per_Gene)[Use_Inds])
+plt.colorbar()
+plt.xlabel("UMAP 1",fontsize=16)
+plt.ylabel("UMAP 2",fontsize=16)
+# plt.savefig(human_embryo_path + "Gene_Cluster.png",dpi=600)
+# plt.close()
+plt.show()
+
+## We will now subset the original scRNA-seq data down to the genes the branching cluster to create our high resolution embedding.
+
+Keep_Genes = np.where((Gene_Embedding[:,0] < 8))[0]
+Cluster_Use_Gene_IDs = Selected_Genes[Keep_Genes]
+
+### Cluster_Use_Gene_IDs is our set of top ranked genes that we pass onto downstream analysis.
+# np.save("Saved_cESFW_Genes.npy",Cluster_Use_Gene_IDs)
+
+
+
