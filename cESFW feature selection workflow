@@ -19,32 +19,6 @@ from scipy.io import mmread
 
 ##### Dependencies #####
 
-##### UMAP Plotting Function #####
-
-def Plot_UMAP(Embedding):
-    fig, axs = plt.subplots(1,2,figsize=(16, 8))
-    plt.subplot(1,2,1)
-    plt.title("Timepoints",fontsize=18)
-    Unique_Timepoints = np.unique(Timepoints)
-    for i in np.arange(Unique_Timepoints.shape[0]):
-        IDs = np.where(Timepoints == Unique_Timepoints[i])[0]
-        plt.scatter(Embedding[IDs,0],Embedding[IDs,1],s=8,label=Unique_Timepoints[i])
-    #
-    plt.legend()
-    #
-    plt.subplot(1,2,2)
-    plt.title("Cell Subtypes",fontsize=18)
-    Unique_Cell_Subtypes = np.unique(Domains)
-    for i in np.arange(Unique_Cell_Subtypes.shape[0]):
-        IDs = np.where(Domains == Unique_Cell_Subtypes[i])[0]
-        plt.scatter(Embedding[IDs,0],Embedding[IDs,1],s=8,label=Unique_Cell_Subtypes[i],c=Colours[i])
-    #
-    plt.legend()
-    #
-    plt.setp(axs, xlabel='UMAP 1', ylabel="UMAP 2")
-
-##### Dependencies #####
-
 ## Set path for retreiving and depositing data
 Gunes_path = "/Users/radleya/The Francis Crick Dropbox/BriscoeJ/Radleya/Gunes_Data/raw_data/"
 
